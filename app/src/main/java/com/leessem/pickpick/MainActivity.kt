@@ -3,6 +3,7 @@ package com.leessem.pickpick
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -84,6 +86,7 @@ fun MainScreen() {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var showSaveRoundDialog by remember { mutableStateOf(false) }
     var editingRoundSetId by remember { mutableStateOf<String?>(null) }
+    var selectedGenerationSet by remember { mutableStateOf<GenerationSet?>(null) }
 
     fun resetFromStage1() {
         stage1Games = emptyList()
@@ -161,6 +164,22 @@ fun MainScreen() {
         generationSetStore.delete(id)
         savedGenerationSets = generationSetStore.getAll()
         pendingDeleteId = null
+        if (selectedGenerationSet?.id == id) {
+            selectedGenerationSet = null
+        }
+    }
+
+    val currentSelection = selectedGenerationSet
+    if (currentSelection != null) {
+        GenerationSetDetailScreen(
+            set = currentSelection,
+            onBack = { selectedGenerationSet = null },
+            onDeleteClick = { pendingDeleteId = currentSelection.id }
+        )
+        pendingDeleteId?.let { id ->
+            DeleteSetConfirmDialog(onConfirm = { deleteSet(id) }, onDismiss = { pendingDeleteId = null })
+        }
+        return
     }
 
     Column(
@@ -295,6 +314,7 @@ fun MainScreen() {
                 savedGenerationSets.forEach { set ->
                     SavedSetRow(
                         set = set,
+                        onClick = { selectedGenerationSet = set },
                         onEditRoundClick = { editingRoundSetId = set.id },
                         onDeleteClick = { pendingDeleteId = set.id }
                     )
@@ -304,21 +324,7 @@ fun MainScreen() {
     }
 
     pendingDeleteId?.let { id ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteId = null },
-            title = { Text(text = "생성 세트 삭제") },
-            text = { Text(text = "이 생성 세트를 삭제할까요?") },
-            confirmButton = {
-                TextButton(onClick = { deleteSet(id) }) {
-                    Text(text = "삭제")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteId = null }) {
-                    Text(text = "취소")
-                }
-            }
-        )
+        DeleteSetConfirmDialog(onConfirm = { deleteSet(id) }, onDismiss = { pendingDeleteId = null })
     }
 
     if (showSaveRoundDialog) {
@@ -447,11 +453,17 @@ private fun GameRow(label: String, game: LottoGame) {
 }
 
 @Composable
-private fun SavedSetRow(set: GenerationSet, onEditRoundClick: () -> Unit, onDeleteClick: () -> Unit) {
+private fun SavedSetRow(
+    set: GenerationSet,
+    onClick: () -> Unit,
+    onEditRoundClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -482,6 +494,88 @@ private fun SavedSetRow(set: GenerationSet, onEditRoundClick: () -> Unit, onDele
             }
         }
     }
+}
+
+@Composable
+private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, onDeleteClick: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TextButton(onClick = onBack) { Text(text = "목록으로") }
+            TextButton(onClick = onDeleteClick) { Text(text = "삭제") }
+        }
+
+        Text(
+            text = set.lottoRound?.let { "제${it}회" } ?: "회차 미지정",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+        Text(
+            text = dateFormat.format(Date(set.createdAt)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.Gray
+        )
+
+        Text(text = "1단계", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 20.dp))
+        Column(modifier = Modifier.padding(top = 8.dp)) {
+            set.stage1Games.forEachIndexed { index, game ->
+                GameRow(label = "${index + 1}게임", game = game)
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(text = "2단계", style = MaterialTheme.typography.titleLarge)
+        Column(modifier = Modifier.padding(top = 8.dp)) {
+            set.stage2Games.forEachIndexed { index, game ->
+                GameRow(label = "${index + 1}게임", game = game)
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        val finalGame = set.finalGame
+        if (finalGame != null) {
+            Text(text = "미출현 번호 최종 조합", style = MaterialTheme.typography.titleLarge)
+            Row(
+                modifier = Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                finalGame.numbers.forEach { number -> LottoBall(number = number, size = 44.dp) }
+            }
+        } else {
+            Text(text = "미출현 번호 최종 조합 없음", style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+@Composable
+private fun DeleteSetConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "생성 세트 삭제") },
+        text = { Text(text = "이 생성 세트를 삭제할까요?") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(text = "삭제")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "취소")
+            }
+        }
+    )
 }
 
 @Composable

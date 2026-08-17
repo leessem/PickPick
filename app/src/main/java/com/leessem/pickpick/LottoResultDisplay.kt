@@ -18,7 +18,7 @@ data class LottoResultSummary(
 
 object LottoResultSummarizer {
     fun summarize(result: GenerationCheckResult): LottoResultSummary {
-        val all = result.stage1Results + result.stage2Results + listOfNotNull(result.finalResult)
+        val all = result.stage1Results + result.stage2Results + result.stage3Results
         return LottoResultSummary(
             totalGames = all.size,
             firstCount = all.count { it.rank == LottoRank.FIRST },

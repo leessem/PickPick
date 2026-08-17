@@ -70,7 +70,8 @@ private enum class Stage1Mode { AUTO, MANUAL }
 
 private val FULL_RANGE = (1..45).toList()
 private const val STAGE1_GAME_COUNT = 5
-private const val STAGE2_REGULAR_GAME_COUNT = 4
+private const val STAGE2_GAME_COUNT = 2
+private const val STAGE3_GAME_COUNT = 3
 
 private enum class LatestCheckStatus { CHECKING, DONE, FAILED }
 
@@ -104,8 +105,8 @@ fun MainScreen() {
     var stage1Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
     var manualSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var stage2Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
-    var neverAppearedPool by remember { mutableStateOf<List<Int>?>(null) }
-    var finalGameResult by remember { mutableStateOf<GenerationResult?>(null) }
+    var stage3BasisPool by remember { mutableStateOf<List<Int>?>(null) }
+    var stage3Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
     var savedGenerationSets by remember { mutableStateOf(generationSetStore.getAll()) }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var showSaveRoundDialog by remember { mutableStateOf(false) }
@@ -116,8 +117,8 @@ fun MainScreen() {
         stage1Games = emptyList()
         manualSelection = emptySet()
         stage2Games = emptyList()
-        neverAppearedPool = null
-        finalGameResult = null
+        stage3BasisPool = null
+        stage3Games = emptyList()
     }
 
     fun startAuto() {
@@ -143,34 +144,33 @@ fun MainScreen() {
         }
     }
 
-    // generateGames/generateGame are the same building blocks LottoStageGenerator.generateSession
-    // uses internally; only the pool-exclusion arithmetic (already implemented and tested in
-    // LottoStageGenerator.assembleSession) is repeated here, because the UI needs Stage 2 and the
-    // final game to be separate, explicit button presses rather than one bundled call.
+    // splitStage1/neverAppearedPool/generateStageGame are the same building blocks
+    // LottoStageGenerator.generateSession uses internally, reused directly here because the UI
+    // needs Stage 2 and Stage 3 to be separate, explicit button presses rather than one bundled
+    // call. Stage 3's basis (and thus its never-appeared pool) is fixed the moment Stage 2 is
+    // generated — the leftover 2 Stage 1 games never change afterward, so Stage 3's pool must not
+    // be recomputed from whatever Stage 2 happens to generate.
     fun generateStage2() {
-        val stage1Used = stage1Games.flatMap { it.numbers }.toSet()
-        val stage2Pool = FULL_RANGE - stage1Used
-        val games = LottoStageGenerator.generateGames(STAGE2_REGULAR_GAME_COUNT, stage2Pool)
-        stage2Games = games
-        val stage2Used = games.flatMap { it.numbers }.toSet()
-        neverAppearedPool = FULL_RANGE - stage1Used - stage2Used
-        finalGameResult = null
+        val (stage2Basis, stage3Basis) = LottoStageGenerator.splitStage1(stage1Games)
+        val stage2Pool = LottoStageGenerator.neverAppearedPool(stage2Basis)
+        stage2Games = List(STAGE2_GAME_COUNT) { LottoStageGenerator.generateStageGame(stage2Pool) }
+        stage3BasisPool = LottoStageGenerator.neverAppearedPool(stage3Basis)
+        stage3Games = emptyList()
     }
 
-    fun generateFinalGame() {
-        val pool = neverAppearedPool ?: return
-        finalGameResult = LottoNumberGenerator.generateGame(pool)
+    fun generateStage3() {
+        val pool = stage3BasisPool ?: return
+        stage3Games = List(STAGE3_GAME_COUNT) { LottoStageGenerator.generateStageGame(pool) }
     }
 
     fun saveWithRound(round: Int?) {
-        val finalGame = (finalGameResult as? GenerationResult.Success)?.let { LottoGame(it.numbers) }
         val set = GenerationSet(
             id = UUID.randomUUID().toString(),
             lottoRound = round,
             createdAt = System.currentTimeMillis(),
             stage1Games = stage1Games,
             stage2Games = stage2Games,
-            finalGame = finalGame
+            stage3Games = stage3Games
         )
         generationSetStore.save(set)
         savedGenerationSets = generationSetStore.getAll()
@@ -289,53 +289,26 @@ fun MainScreen() {
                     GameRow(label = "${index + 1}게임", game = game)
                 }
             }
-        }
-
-        neverAppearedPool?.let { pool ->
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-            Text(text = "미출현 번호", style = MaterialTheme.typography.titleLarge)
-            if (pool.size >= LottoNumberGenerator.PICK_COUNT) {
-                Row(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    pool.sorted().forEach { number -> LottoBall(number = number, size = 28.dp) }
-                }
-                Button(onClick = { generateFinalGame() }, modifier = Modifier.padding(top = 12.dp)) {
-                    Text(text = "최종 1게임 생성")
-                }
-            } else {
-                Text(
-                    text = "미출현 번호가 ${pool.size}개뿐이라 최종 게임을 생성할 수 없습니다.",
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+            Button(onClick = { generateStage3() }, modifier = Modifier.padding(top = 12.dp)) {
+                Text(text = "3단계 생성")
             }
         }
 
-        finalGameResult?.let { result ->
+        if (stage3Games.isNotEmpty()) {
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-            Text(text = "최종 게임", style = MaterialTheme.typography.titleLarge)
-            when (result) {
-                is GenerationResult.Success -> {
-                    Row(
-                        modifier = Modifier.padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        result.numbers.forEach { number -> LottoBall(number = number, size = 44.dp) }
-                    }
-                }
-                is GenerationResult.InsufficientNumbers -> {
-                    Text(
-                        text = "번호가 부족해 최종 게임을 생성할 수 없습니다.",
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+            Text(text = "3단계", style = MaterialTheme.typography.titleLarge)
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                stage3Games.forEachIndexed { index, game ->
+                    GameRow(label = "${index + 1}게임", game = game)
                 }
             }
         }
 
         Button(
             onClick = { showSaveRoundDialog = true },
-            enabled = stage1Games.size == STAGE1_GAME_COUNT && stage2Games.size == STAGE2_REGULAR_GAME_COUNT,
+            enabled = stage1Games.size == STAGE1_GAME_COUNT &&
+                stage2Games.size == STAGE2_GAME_COUNT &&
+                stage3Games.size == STAGE3_GAME_COUNT,
             modifier = Modifier.padding(top = 20.dp)
         ) {
             Text(text = "이 생성 결과 저장")
@@ -524,7 +497,7 @@ private fun SavedSetRow(
             )
             Text(
                 text = "1단계 ${set.stage1Games.size}게임 · 2단계 ${set.stage2Games.size}게임 · " +
-                    if (set.finalGame != null) "최종 조합 있음" else "최종 조합 없음",
+                    "3단계 ${set.stage3Games.size}게임",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray
             )
@@ -674,23 +647,11 @@ private fun GenerationSetDetailScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        val finalGame = set.finalGame
-        if (finalGame != null) {
-            Text(text = "미출현 번호 최종 조합", style = MaterialTheme.typography.titleLarge)
-            Row(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                finalGame.numbers.forEach { number -> LottoBall(number = number, size = 44.dp) }
+        Text(text = "3단계", style = MaterialTheme.typography.titleLarge)
+        Column(modifier = Modifier.padding(top = 8.dp)) {
+            set.stage3Games.forEachIndexed { index, game ->
+                GameRow(label = "${index + 1}게임", game = game, checkResult = checkResult?.stage3Results?.getOrNull(index))
             }
-            checkResult?.finalResult?.let { result ->
-                Column(modifier = Modifier.padding(top = 4.dp)) {
-                    Text(text = lottoMatchCountText(result), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(text = lottoRankDisplayText(result), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                }
-            }
-        } else {
-            Text(text = "미출현 번호 최종 조합 없음", style = MaterialTheme.typography.titleLarge)
         }
     }
 }

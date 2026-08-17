@@ -27,7 +27,7 @@ data class LottoCheckResult(
 data class GenerationCheckResult(
     val stage1Results: List<LottoCheckResult>,
     val stage2Results: List<LottoCheckResult>,
-    val finalResult: LottoCheckResult?
+    val stage3Results: List<LottoCheckResult>
 )
 
 object LottoResultChecker {
@@ -51,6 +51,6 @@ object LottoResultChecker {
         GenerationCheckResult(
             stage1Results = set.stage1Games.map { check(it, draw) },
             stage2Results = set.stage2Games.map { check(it, draw) },
-            finalResult = set.finalGame?.let { check(it, draw) }
+            stage3Results = set.stage3Games.map { check(it, draw) }
         )
 }

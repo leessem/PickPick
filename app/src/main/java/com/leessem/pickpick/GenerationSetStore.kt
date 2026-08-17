@@ -8,7 +8,7 @@ data class GenerationSet(
     val createdAt: Long,
     val stage1Games: List<LottoGame>,
     val stage2Games: List<LottoGame>,
-    val finalGame: LottoGame?
+    val stage3Games: List<LottoGame>
 )
 
 object GenerationSetCodec {
@@ -26,7 +26,7 @@ object GenerationSetCodec {
                 set.createdAt.toString(),
                 encodeGames(set.stage1Games),
                 encodeGames(set.stage2Games),
-                set.finalGame?.let { encodeGame(it) }.orEmpty()
+                encodeGames(set.stage3Games)
             ).joinToString(FIELD_DELIMITER)
         }
 
@@ -42,7 +42,7 @@ object GenerationSetCodec {
                 createdAt = fields[2].toLong(),
                 stage1Games = decodeGames(fields[3]),
                 stage2Games = decodeGames(fields[4]),
-                finalGame = fields[5].takeIf { it.isNotEmpty() }?.let { decodeGame(it) }
+                stage3Games = decodeGames(fields[5])
             )
         }
     }
@@ -83,9 +83,13 @@ class GenerationSetStore(context: Context) {
     }
 
     companion object {
-        // Same preferences file LottoHistoryStore already uses; "generation_sets" is a
+        // Same preferences file LottoHistoryStore already uses; "generation_sets_v2" is a
         // separate key so this feature never reads or overwrites the existing "lotto_history" data.
+        // Bumped from "generation_sets" to "_v2" when the stage structure changed from
+        // 5+4+finalGame to 5+2+3 (stage3Games) — the old key's data is simply left orphaned
+        // rather than migrated, since its field 5 (a single finalGame) is not meaningfully
+        // convertible to a 3-game stage3Games list.
         private const val PREFS_NAME = "pickpick_prefs"
-        private const val KEY_GENERATION_SETS = "generation_sets"
+        private const val KEY_GENERATION_SETS = "generation_sets_v2"
     }
 }

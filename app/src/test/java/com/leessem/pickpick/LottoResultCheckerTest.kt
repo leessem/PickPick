@@ -3,7 +3,6 @@ package com.leessem.pickpick
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -134,7 +133,7 @@ class LottoResultCheckerTest {
         }
     }
 
-    private fun sampleSet(finalGame: LottoGame?) = GenerationSet(
+    private fun sampleSet(stage3Games: List<LottoGame>) = GenerationSet(
         id = "set-1",
         lottoRound = 1234,
         createdAt = 1L,
@@ -147,16 +146,20 @@ class LottoResultCheckerTest {
         ),
         stage2Games = listOf(
             LottoGame(listOf(8, 9, 10, 11, 12, 13)),   // NONE
-            LottoGame(listOf(1, 8, 9, 10, 11, 12)),    // NONE
-            LottoGame(listOf(1, 2, 8, 9, 10, 11)),     // NONE
             LottoGame(listOf(1, 2, 3, 4, 5, 6))        // FIRST
         ),
-        finalGame = finalGame
+        stage3Games = stage3Games
+    )
+
+    private val sampleStage3 = listOf(
+        LottoGame(listOf(1, 8, 9, 10, 11, 12)),    // NONE
+        LottoGame(listOf(1, 2, 8, 9, 10, 11)),     // NONE
+        LottoGame(listOf(1, 2, 3, 4, 5, 7))        // SECOND
     )
 
     @Test
     fun `checking a generation set evaluates all five stage1 games independently`() {
-        val result = LottoResultChecker.check(sampleSet(finalGame = null), draw)
+        val result = LottoResultChecker.check(sampleSet(stage3Games = emptyList()), draw)
 
         assertEquals(5, result.stage1Results.size)
         assertEquals(
@@ -166,31 +169,35 @@ class LottoResultCheckerTest {
     }
 
     @Test
-    fun `checking a generation set evaluates all four stage2 games independently`() {
-        val result = LottoResultChecker.check(sampleSet(finalGame = null), draw)
+    fun `checking a generation set evaluates both stage2 games independently`() {
+        val result = LottoResultChecker.check(sampleSet(stage3Games = emptyList()), draw)
 
-        assertEquals(4, result.stage2Results.size)
+        assertEquals(2, result.stage2Results.size)
         assertEquals(
-            listOf(LottoRank.NONE, LottoRank.NONE, LottoRank.NONE, LottoRank.FIRST),
+            listOf(LottoRank.NONE, LottoRank.FIRST),
             result.stage2Results.map { it.rank }
         )
     }
 
     @Test
-    fun `checking a generation set with a final game evaluates it too`() {
-        val result = LottoResultChecker.check(sampleSet(finalGame = LottoGame(listOf(1, 2, 3, 4, 5, 7))), draw)
+    fun `checking a generation set evaluates all three stage3 games independently`() {
+        val result = LottoResultChecker.check(sampleSet(stage3Games = sampleStage3), draw)
 
-        assertNotNull(result.finalResult)
-        assertEquals(LottoRank.SECOND, result.finalResult!!.rank)
+        assertEquals(3, result.stage3Results.size)
+        assertEquals(
+            listOf(LottoRank.NONE, LottoRank.NONE, LottoRank.SECOND),
+            result.stage3Results.map { it.rank }
+        )
     }
 
     @Test
-    fun `checking a generation set with no final game leaves finalResult null`() {
-        val result = LottoResultChecker.check(sampleSet(finalGame = null), draw)
+    fun `checking a generation set with no stage3 games yet leaves stage3Results empty`() {
+        val result = LottoResultChecker.check(sampleSet(stage3Games = emptyList()), draw)
 
-        assertNull(result.finalResult)
-        // Stage results must still be computed normally even without a final game.
+        assertNotNull(result.stage3Results)
+        assertEquals(0, result.stage3Results.size)
+        // Stage1/stage2 results must still be computed normally.
         assertEquals(5, result.stage1Results.size)
-        assertEquals(4, result.stage2Results.size)
+        assertEquals(2, result.stage2Results.size)
     }
 }

@@ -9,8 +9,8 @@ class LottoResultDisplayTest {
     private fun result(rank: LottoRank, matchedCount: Int, bonusMatched: Boolean = false) =
         LottoCheckResult(rank = rank, matchedCount = matchedCount, bonusMatched = bonusMatched)
 
-    // stage1: one of each non-NONE rank; stage2: all NONE; final: NONE -> 10 games total.
-    private fun allRanksCheckResult(finalResult: LottoCheckResult?) = GenerationCheckResult(
+    // stage1: one of each non-NONE rank (5); stage2: all NONE (2); stage3: all NONE (3) -> 10 games total.
+    private fun allRanksCheckResult() = GenerationCheckResult(
         stage1Results = listOf(
             result(LottoRank.FIRST, 6),
             result(LottoRank.SECOND, 5, bonusMatched = true),
@@ -20,56 +20,55 @@ class LottoResultDisplayTest {
         ),
         stage2Results = listOf(
             result(LottoRank.NONE, 2),
-            result(LottoRank.NONE, 1),
-            result(LottoRank.NONE, 0),
-            result(LottoRank.NONE, 2)
+            result(LottoRank.NONE, 1)
         ),
-        finalResult = finalResult
+        stage3Results = listOf(
+            result(LottoRank.NONE, 0),
+            result(LottoRank.NONE, 2),
+            result(LottoRank.NONE, 1)
+        )
     )
 
     private fun allNoneCheckResult() = GenerationCheckResult(
         stage1Results = List(5) { result(LottoRank.NONE, 1) },
-        stage2Results = List(4) { result(LottoRank.NONE, 0) },
-        finalResult = result(LottoRank.NONE, 2)
+        stage2Results = List(2) { result(LottoRank.NONE, 0) },
+        stage3Results = List(3) { result(LottoRank.NONE, 2) }
     )
 
-    // 1: full 10-game summary computes correctly
+    // 1: full 10-game (5 stage1 + 2 stage2 + 3 stage3) summary computes correctly
     @Test
-    fun `summarizes ten games (5 stage1 + 4 stage2 + 1 final) correctly`() {
-        val summary = LottoResultSummarizer.summarize(allRanksCheckResult(result(LottoRank.NONE, 1)))
+    fun `summarizes ten games (5 stage1 + 2 stage2 + 3 stage3) correctly`() {
+        val summary = LottoResultSummarizer.summarize(allRanksCheckResult())
 
         assertEquals(10, summary.totalGames)
     }
 
-    // 2 & 3: stage1/stage2 counts feed into the total (implicitly proven by the 9 vs 10 split below)
+    // 2-4: stage1/stage2/stage3 counts all feed into the total
     @Test
-    fun `stage1 and stage2 results are both included in the total`() {
-        val summary = LottoResultSummarizer.summarize(allRanksCheckResult(finalResult = null))
+    fun `stage1 stage2 and stage3 results are all included in the total`() {
+        val summary = LottoResultSummarizer.summarize(allRanksCheckResult())
 
-        // 5 stage1 + 4 stage2, no final -> 9
-        assertEquals(9, summary.totalGames)
+        assertEquals(5 + 2 + 3, summary.totalGames)
     }
 
-    // 4: final game present is counted
+    // 5: an empty stage3Results (not yet generated) does not crash and yields five games
     @Test
-    fun `a present final game is counted in the total`() {
-        val summary = LottoResultSummarizer.summarize(allRanksCheckResult(result(LottoRank.NONE, 0)))
+    fun `an empty stage3 result list is handled without error and yields five games`() {
+        val summary = LottoResultSummarizer.summarize(
+            GenerationCheckResult(
+                stage1Results = List(5) { result(LottoRank.NONE, 1) },
+                stage2Results = emptyList(),
+                stage3Results = emptyList()
+            )
+        )
 
-        assertEquals(10, summary.totalGames)
-    }
-
-    // 5: final game null does not crash and yields 9 total
-    @Test
-    fun `a null final game is handled without error and yields nine games`() {
-        val summary = LottoResultSummarizer.summarize(allRanksCheckResult(finalResult = null))
-
-        assertEquals(9, summary.totalGames)
+        assertEquals(5, summary.totalGames)
     }
 
     // 6-10: each rank is represented in the counts
     @Test
     fun `first through fifth place counts are each included`() {
-        val summary = LottoResultSummarizer.summarize(allRanksCheckResult(result(LottoRank.NONE, 1)))
+        val summary = LottoResultSummarizer.summarize(allRanksCheckResult())
 
         assertEquals(1, summary.firstCount)
         assertEquals(1, summary.secondCount)

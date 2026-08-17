@@ -21,7 +21,7 @@ class LottoDrawCacheTest {
         createdAt = 0L,
         stage1Games = listOf(LottoGame(listOf(1, 15, 19, 31, 35, 43))),
         stage2Games = emptyList(),
-        finalGame = null
+        stage3Games = emptyList()
     )
 
     // 16: when the cache already has the round, the fetch function must never be invoked

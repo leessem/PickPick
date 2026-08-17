@@ -72,10 +72,33 @@ private val FULL_RANGE = (1..45).toList()
 private const val STAGE1_GAME_COUNT = 5
 private const val STAGE2_REGULAR_GAME_COUNT = 4
 
+private enum class LatestCheckStatus { CHECKING, DONE, FAILED }
+
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
     val generationSetStore = remember { GenerationSetStore(context) }
+    val drawStore = remember { LottoDrawStore(context) }
+
+    var latestCheckStatus by remember { mutableStateOf(LatestCheckStatus.CHECKING) }
+
+    // Runs exactly once per process lifetime (keyed on Unit), not per recomposition or per
+    // screen navigation — MainScreen itself is only ever composed once at the app's root.
+    LaunchedEffect(Unit) {
+        val seed = drawStore.latestRound() ?: LottoLatestRoundChecker.estimateCurrentRound()
+        when (val result = LottoLatestRoundChecker.findLatestRound(seed)) {
+            is LottoLatestRoundChecker.Result.Found -> {
+                if (drawStore.get(result.round) == null) {
+                    val fetchResult = LottoDrawRepository.getDraw(result.round)
+                    if (fetchResult is LottoDrawFetchResult.Success) {
+                        drawStore.save(fetchResult.draw)
+                    }
+                }
+                latestCheckStatus = LatestCheckStatus.DONE
+            }
+            is LottoLatestRoundChecker.Result.NetworkError -> latestCheckStatus = LatestCheckStatus.FAILED
+        }
+    }
 
     var stage1Mode by remember { mutableStateOf<Stage1Mode?>(null) }
     var stage1Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
@@ -174,6 +197,7 @@ fun MainScreen() {
     if (currentSelection != null) {
         GenerationSetDetailScreen(
             set = currentSelection,
+            drawStore = drawStore,
             onBack = { selectedGenerationSet = null },
             onDeleteClick = { pendingDeleteId = currentSelection.id }
         )
@@ -190,6 +214,22 @@ fun MainScreen() {
             .padding(16.dp)
     ) {
         Text(text = "PickPick", style = MaterialTheme.typography.headlineLarge)
+
+        when (latestCheckStatus) {
+            LatestCheckStatus.CHECKING -> Text(
+                text = "최신 당첨 결과 확인 중...",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            LatestCheckStatus.FAILED -> Text(
+                text = "최신 당첨 결과를 확인하지 못했습니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            LatestCheckStatus.DONE -> {}
+        }
 
         Text(
             text = "1단계",
@@ -508,7 +548,12 @@ private sealed class DrawCheckState {
 }
 
 @Composable
-private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, onDeleteClick: () -> Unit) {
+private fun GenerationSetDetailScreen(
+    set: GenerationSet,
+    drawStore: LottoDrawStore,
+    onBack: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
     BackHandler(onBack = onBack)
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
     val drawDateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.KOREA) }
@@ -518,16 +563,23 @@ private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, on
     }
 
     // Keyed on set.id so this only re-fetches when the displayed set changes, not on every
-    // recomposition (e.g. a state update from the delete dialog).
+    // recomposition (e.g. a state update from the delete dialog). Cache-first: LottoDrawStore is
+    // checked before ever calling LottoDrawRepository (see resolveDraw in LottoDrawCache.kt).
     LaunchedEffect(set.id) {
         val round = set.lottoRound ?: return@LaunchedEffect
         drawCheckState = DrawCheckState.Loading
-        when (val fetchResult = LottoDrawRepository.getDraw(round)) {
-            is LottoDrawFetchResult.Success -> {
-                val checkResult = LottoResultChecker.check(set, fetchResult.draw)
-                drawCheckState = DrawCheckState.Success(fetchResult.draw, checkResult)
+        when (val result = resolveDraw(round, getCached = drawStore::get, saveToCache = drawStore::save)) {
+            is DrawLookupResult.FromCache -> {
+                val checkResult = LottoResultChecker.check(set, result.draw)
+                drawCheckState = DrawCheckState.Success(result.draw, checkResult)
             }
-            else -> drawCheckState = DrawCheckState.Failure(lottoDrawFetchErrorMessage(fetchResult))
+            is DrawLookupResult.Fetched -> {
+                val checkResult = LottoResultChecker.check(set, result.draw)
+                drawCheckState = DrawCheckState.Success(result.draw, checkResult)
+            }
+            is DrawLookupResult.Failed -> {
+                drawCheckState = DrawCheckState.Failure(lottoDrawFetchErrorMessage(result.fetchResult))
+            }
         }
     }
 

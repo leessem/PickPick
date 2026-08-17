@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -438,16 +439,19 @@ private fun NumberCell(number: Int, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun GameRow(label: String, game: LottoGame) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(text = label, modifier = Modifier.width(56.dp), style = MaterialTheme.typography.bodyMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            game.numbers.forEach { number -> LottoBall(number = number, size = 28.dp) }
+private fun GameRow(label: String, game: LottoGame, checkResult: LottoCheckResult? = null) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = label, modifier = Modifier.width(56.dp), style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                game.numbers.forEach { number -> LottoBall(number = number, size = 28.dp) }
+            }
+        }
+        if (checkResult != null) {
+            Column(modifier = Modifier.padding(start = 56.dp, top = 2.dp)) {
+                Text(text = lottoMatchCountText(checkResult), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(text = lottoRankDisplayText(checkResult), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
         }
     }
 }
@@ -496,10 +500,36 @@ private fun SavedSetRow(
     }
 }
 
+private sealed class DrawCheckState {
+    object NoRound : DrawCheckState()
+    object Loading : DrawCheckState()
+    data class Success(val draw: LottoDrawResult, val check: GenerationCheckResult) : DrawCheckState()
+    data class Failure(val message: String) : DrawCheckState()
+}
+
 @Composable
 private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, onDeleteClick: () -> Unit) {
     BackHandler(onBack = onBack)
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
+    val drawDateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.KOREA) }
+
+    var drawCheckState by remember(set.id) {
+        mutableStateOf<DrawCheckState>(if (set.lottoRound == null) DrawCheckState.NoRound else DrawCheckState.Loading)
+    }
+
+    // Keyed on set.id so this only re-fetches when the displayed set changes, not on every
+    // recomposition (e.g. a state update from the delete dialog).
+    LaunchedEffect(set.id) {
+        val round = set.lottoRound ?: return@LaunchedEffect
+        drawCheckState = DrawCheckState.Loading
+        when (val fetchResult = LottoDrawRepository.getDraw(round)) {
+            is LottoDrawFetchResult.Success -> {
+                val checkResult = LottoResultChecker.check(set, fetchResult.draw)
+                drawCheckState = DrawCheckState.Success(fetchResult.draw, checkResult)
+            }
+            else -> drawCheckState = DrawCheckState.Failure(lottoDrawFetchErrorMessage(fetchResult))
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -528,10 +558,58 @@ private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, on
             color = Color.Gray
         )
 
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(text = "당첨 결과", style = MaterialTheme.typography.titleLarge)
+        when (val state = drawCheckState) {
+            is DrawCheckState.NoRound -> {
+                Text(
+                    text = "회차가 지정되지 않아 당첨 결과를 확인할 수 없습니다.",
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+            is DrawCheckState.Loading -> {
+                Text(text = "당첨 결과 확인 중...", modifier = Modifier.padding(top = 8.dp))
+            }
+            is DrawCheckState.Failure -> {
+                Text(text = state.message, modifier = Modifier.padding(top = 8.dp))
+            }
+            is DrawCheckState.Success -> {
+                Text(
+                    text = "제${state.draw.round}회",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                Text(
+                    text = "추첨일: ${drawDateFormat.format(Date(state.draw.drawDate))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+                Text(text = "당첨번호:", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                    state.draw.winningNumbers.sorted().forEach { number -> LottoBall(number = number, size = 36.dp) }
+                }
+                Text(text = "보너스:", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                LottoBall(number = state.draw.bonusNumber, size = 36.dp)
+
+                val summary = LottoResultSummarizer.summarize(state.check)
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(text = "총 ${summary.totalGames}게임", style = MaterialTheme.typography.bodyMedium)
+                    Text(text = "1등  ${summary.firstCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "2등  ${summary.secondCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "3등  ${summary.thirdCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "4등  ${summary.fourthCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "5등  ${summary.fifthCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = "미당첨  ${summary.noneCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+            }
+        }
+
+        val checkResult = (drawCheckState as? DrawCheckState.Success)?.check
+
         Text(text = "1단계", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 20.dp))
         Column(modifier = Modifier.padding(top = 8.dp)) {
             set.stage1Games.forEachIndexed { index, game ->
-                GameRow(label = "${index + 1}게임", game = game)
+                GameRow(label = "${index + 1}게임", game = game, checkResult = checkResult?.stage1Results?.getOrNull(index))
             }
         }
 
@@ -539,7 +617,7 @@ private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, on
         Text(text = "2단계", style = MaterialTheme.typography.titleLarge)
         Column(modifier = Modifier.padding(top = 8.dp)) {
             set.stage2Games.forEachIndexed { index, game ->
-                GameRow(label = "${index + 1}게임", game = game)
+                GameRow(label = "${index + 1}게임", game = game, checkResult = checkResult?.stage2Results?.getOrNull(index))
             }
         }
 
@@ -552,6 +630,12 @@ private fun GenerationSetDetailScreen(set: GenerationSet, onBack: () -> Unit, on
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 finalGame.numbers.forEach { number -> LottoBall(number = number, size = 44.dp) }
+            }
+            checkResult?.finalResult?.let { result ->
+                Column(modifier = Modifier.padding(top = 4.dp)) {
+                    Text(text = lottoMatchCountText(result), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(text = lottoRankDisplayText(result), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
             }
         } else {
             Text(text = "미출현 번호 최종 조합 없음", style = MaterialTheme.typography.titleLarge)

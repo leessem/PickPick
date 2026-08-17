@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PickPick</string>
+    <string name="welcome_message">PickPick에 오신 것을 환영합니다</string>
+</resources>

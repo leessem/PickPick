@@ -4,24 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,15 +33,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,140 +52,234 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class Stage1Mode { AUTO, MANUAL }
+
+private val FULL_RANGE = (1..45).toList()
+private const val STAGE1_GAME_COUNT = 5
+private const val STAGE2_REGULAR_GAME_COUNT = 4
+
 @Composable
 fun MainScreen() {
-    val context = LocalContext.current
-    val historyStore = remember { LottoHistoryStore(context) }
-    var history by remember { mutableStateOf(historyStore.getHistory()) }
-    var currentBatch by remember { mutableStateOf(history.take(1)) }
-    var showClearAllDialog by remember { mutableStateOf(false) }
+    var stage1Mode by remember { mutableStateOf<Stage1Mode?>(null) }
+    var stage1Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
+    var manualSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var stage2Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
+    var neverAppearedPool by remember { mutableStateOf<List<Int>?>(null) }
+    var finalGameResult by remember { mutableStateOf<GenerationResult?>(null) }
 
-    fun generate(count: Int) {
-        val base = System.currentTimeMillis()
-        val batch = (0 until count).map { index ->
-            LottoRecord(numbers = LottoNumberGenerator.generate(), timestamp = base - index)
+    fun resetFromStage1() {
+        stage1Games = emptyList()
+        manualSelection = emptySet()
+        stage2Games = emptyList()
+        neverAppearedPool = null
+        finalGameResult = null
+    }
+
+    fun startAuto() {
+        stage1Mode = Stage1Mode.AUTO
+        resetFromStage1()
+        stage1Games = LottoStageGenerator.generateGames(STAGE1_GAME_COUNT, FULL_RANGE)
+    }
+
+    fun startManual() {
+        stage1Mode = Stage1Mode.MANUAL
+        resetFromStage1()
+    }
+
+    fun toggleManualNumber(number: Int) {
+        if (stage1Games.size >= STAGE1_GAME_COUNT) return
+        val updated = if (number in manualSelection) manualSelection - number else manualSelection + number
+        if (updated.size > LottoNumberGenerator.PICK_COUNT) return
+        if (updated.size == LottoNumberGenerator.PICK_COUNT) {
+            stage1Games = stage1Games + LottoGame(updated.sorted())
+            manualSelection = emptySet()
+        } else {
+            manualSelection = updated
         }
-        historyStore.addRecords(batch)
-        history = historyStore.getHistory()
-        currentBatch = batch
     }
 
-    fun deleteRecord(record: LottoRecord) {
-        historyStore.deleteRecord(record.timestamp)
-        history = historyStore.getHistory()
-        currentBatch = currentBatch.filterNot { it.timestamp == record.timestamp }
+    // generateGames/generateGame are the same building blocks LottoStageGenerator.generateSession
+    // uses internally; only the pool-exclusion arithmetic (already implemented and tested in
+    // LottoStageGenerator.assembleSession) is repeated here, because the UI needs Stage 2 and the
+    // final game to be separate, explicit button presses rather than one bundled call.
+    fun generateStage2() {
+        val stage1Used = stage1Games.flatMap { it.numbers }.toSet()
+        val stage2Pool = FULL_RANGE - stage1Used
+        val games = LottoStageGenerator.generateGames(STAGE2_REGULAR_GAME_COUNT, stage2Pool)
+        stage2Games = games
+        val stage2Used = games.flatMap { it.numbers }.toSet()
+        neverAppearedPool = FULL_RANGE - stage1Used - stage2Used
+        finalGameResult = null
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+    fun generateFinalGame() {
+        val pool = neverAppearedPool ?: return
+        finalGameResult = LottoNumberGenerator.generateGame(pool)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Text(text = "PickPick", style = MaterialTheme.typography.headlineLarge)
+
+        Text(
+            text = "1단계",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(top = 20.dp)
+        )
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "PickPick", style = MaterialTheme.typography.headlineLarge)
-            Text(text = "PickPick에 오신 것을 환영합니다")
+            Button(onClick = { startAuto() }) { Text(text = "자동 생성") }
+            Button(onClick = { startManual() }) { Text(text = "직접 입력") }
+        }
 
-            Row(
-                modifier = Modifier.padding(top = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(onClick = { generate(1) }) {
-                    Text(text = "1게임 생성")
-                }
-                Button(onClick = { generate(5) }) {
-                    Text(text = "5게임 생성")
+        if (stage1Mode == Stage1Mode.MANUAL && stage1Games.size < STAGE1_GAME_COUNT) {
+            Text(
+                text = "${stage1Games.size + 1}게임 선택 중 (${manualSelection.size}/${LottoNumberGenerator.PICK_COUNT})",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 16.dp)
+            )
+            if (manualSelection.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    manualSelection.sorted().forEach { number -> LottoBall(number = number, size = 28.dp) }
                 }
             }
+            NumberPickerGrid(
+                selected = manualSelection,
+                onNumberClick = { toggleManualNumber(it) },
+                modifier = Modifier.padding(top = 12.dp)
+            )
+        }
 
-            if (currentBatch.isNotEmpty()) {
-                Column(
-                    modifier = Modifier.padding(top = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+        if (stage1Games.isNotEmpty()) {
+            Column(modifier = Modifier.padding(top = 16.dp)) {
+                stage1Games.forEachIndexed { index, game ->
+                    GameRow(label = "${index + 1}게임", game = game)
+                }
+            }
+        }
+
+        Button(
+            onClick = { generateStage2() },
+            enabled = stage1Games.size == STAGE1_GAME_COUNT,
+            modifier = Modifier.padding(top = 20.dp)
+        ) {
+            Text(text = "2단계 생성")
+        }
+
+        if (stage2Games.isNotEmpty()) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text(text = "2단계", style = MaterialTheme.typography.titleLarge)
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                stage2Games.forEachIndexed { index, game ->
+                    GameRow(label = "${index + 1}게임", game = game)
+                }
+            }
+        }
+
+        neverAppearedPool?.let { pool ->
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text(text = "미출현 번호", style = MaterialTheme.typography.titleLarge)
+            if (pool.size >= LottoNumberGenerator.PICK_COUNT) {
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    currentBatch.forEach { record ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            record.numbers.forEach { number ->
-                                LottoBall(number = number, size = 44.dp)
-                            }
-                        }
+                    pool.sorted().forEach { number -> LottoBall(number = number, size = 28.dp) }
+                }
+                Button(onClick = { generateFinalGame() }, modifier = Modifier.padding(top = 12.dp)) {
+                    Text(text = "최종 1게임 생성")
+                }
+            } else {
+                Text(
+                    text = "미출현 번호가 ${pool.size}개뿐이라 최종 게임을 생성할 수 없습니다.",
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        }
+
+        finalGameResult?.let { result ->
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text(text = "최종 게임", style = MaterialTheme.typography.titleLarge)
+            when (result) {
+                is GenerationResult.Success -> {
+                    Row(
+                        modifier = Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        result.numbers.forEach { number -> LottoBall(number = number, size = 44.dp) }
                     }
                 }
-            }
-        }
-
-        if (history.isNotEmpty()) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(text = "생성 기록", style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = { showClearAllDialog = true }) {
-                    Text(text = "전체 삭제")
-                }
-            }
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                items(history, key = { it.timestamp }) { record ->
-                    HistoryRow(record = record, onDelete = { deleteRecord(record) })
+                is GenerationResult.InsufficientNumbers -> {
+                    Text(
+                        text = "번호가 부족해 최종 게임을 생성할 수 없습니다.",
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
                 }
             }
         }
     }
+}
 
-    if (showClearAllDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearAllDialog = false },
-            title = { Text(text = "전체 삭제") },
-            text = { Text(text = "생성 기록을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    historyStore.clearAll()
-                    history = emptyList()
-                    currentBatch = emptyList()
-                    showClearAllDialog = false
-                }) {
-                    Text(text = "삭제")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearAllDialog = false }) {
-                    Text(text = "취소")
+@Composable
+private fun NumberPickerGrid(
+    selected: Set<Int>,
+    onNumberClick: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        FULL_RANGE.chunked(9).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { number ->
+                    NumberCell(
+                        number = number,
+                        selected = number in selected,
+                        onClick = { onNumberClick(number) }
+                    )
                 }
             }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+}
+
+@Composable
+private fun NumberCell(number: Int, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(if (selected) lottoBallColor(number) else Color(0xFFE0E0E0))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = number.toString(),
+            color = if (selected) Color.White else Color.Black,
+            fontSize = 11.sp
         )
     }
 }
 
 @Composable
-private fun HistoryRow(record: LottoRecord, onDelete: () -> Unit) {
-    val dateFormat = remember { SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA) }
-    Column(
+private fun GameRow(label: String, game: LottoGame) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = dateFormat.format(Date(record.timestamp)),
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray
-            )
-            TextButton(onClick = onDelete) {
-                Text(text = "삭제", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            }
-        }
-        Row(
-            modifier = Modifier.padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            record.numbers.forEach { number ->
-                LottoBall(number = number, size = 26.dp)
-            }
+        Text(text = label, modifier = Modifier.width(56.dp), style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            game.numbers.forEach { number -> LottoBall(number = number, size = 28.dp) }
         }
     }
 }

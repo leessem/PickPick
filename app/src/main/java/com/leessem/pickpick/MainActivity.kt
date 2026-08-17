@@ -1,6 +1,7 @@
 package com.leessem.pickpick
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -19,11 +20,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,11 +36,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,12 +68,17 @@ private const val STAGE2_REGULAR_GAME_COUNT = 4
 
 @Composable
 fun MainScreen() {
+    val context = LocalContext.current
+    val generationSetStore = remember { GenerationSetStore(context) }
+
     var stage1Mode by remember { mutableStateOf<Stage1Mode?>(null) }
     var stage1Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
     var manualSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var stage2Games by remember { mutableStateOf<List<LottoGame>>(emptyList()) }
     var neverAppearedPool by remember { mutableStateOf<List<Int>?>(null) }
     var finalGameResult by remember { mutableStateOf<GenerationResult?>(null) }
+    var savedGenerationSets by remember { mutableStateOf(generationSetStore.getAll()) }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
 
     fun resetFromStage1() {
         stage1Games = emptyList()
@@ -115,6 +128,27 @@ fun MainScreen() {
     fun generateFinalGame() {
         val pool = neverAppearedPool ?: return
         finalGameResult = LottoNumberGenerator.generateGame(pool)
+    }
+
+    fun saveCurrentSet() {
+        val finalGame = (finalGameResult as? GenerationResult.Success)?.let { LottoGame(it.numbers) }
+        val set = GenerationSet(
+            id = UUID.randomUUID().toString(),
+            lottoRound = null,
+            createdAt = System.currentTimeMillis(),
+            stage1Games = stage1Games,
+            stage2Games = stage2Games,
+            finalGame = finalGame
+        )
+        generationSetStore.save(set)
+        savedGenerationSets = generationSetStore.getAll()
+        Toast.makeText(context, "생성 세트를 저장했습니다.", Toast.LENGTH_SHORT).show()
+    }
+
+    fun deleteSet(id: String) {
+        generationSetStore.delete(id)
+        savedGenerationSets = generationSetStore.getAll()
+        pendingDeleteId = null
     }
 
     Column(
@@ -226,6 +260,49 @@ fun MainScreen() {
                 }
             }
         }
+
+        Button(
+            onClick = { saveCurrentSet() },
+            enabled = stage1Games.size == STAGE1_GAME_COUNT && stage2Games.size == STAGE2_REGULAR_GAME_COUNT,
+            modifier = Modifier.padding(top = 20.dp)
+        ) {
+            Text(text = "이 생성 결과 저장")
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(text = "저장된 생성 세트", style = MaterialTheme.typography.titleLarge)
+        if (savedGenerationSets.isEmpty()) {
+            Text(
+                text = "저장된 생성 세트가 없습니다.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        } else {
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                savedGenerationSets.forEach { set ->
+                    SavedSetRow(set = set, onDeleteClick = { pendingDeleteId = set.id })
+                }
+            }
+        }
+    }
+
+    pendingDeleteId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text(text = "생성 세트 삭제") },
+            text = { Text(text = "이 생성 세트를 삭제할까요?") },
+            confirmButton = {
+                TextButton(onClick = { deleteSet(id) }) {
+                    Text(text = "삭제")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) {
+                    Text(text = "취소")
+                }
+            }
+        )
     }
 }
 
@@ -280,6 +357,31 @@ private fun GameRow(label: String, game: LottoGame) {
         Text(text = label, modifier = Modifier.width(56.dp), style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             game.numbers.forEach { number -> LottoBall(number = number, size = 28.dp) }
+        }
+    }
+}
+
+@Composable
+private fun SavedSetRow(set: GenerationSet, onDeleteClick: () -> Unit) {
+    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column {
+            Text(text = dateFormat.format(Date(set.createdAt)), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = "1단계 ${set.stage1Games.size}게임 · 2단계 ${set.stage2Games.size}게임 · " +
+                    if (set.finalGame != null) "최종 조합 있음" else "최종 조합 없음",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+        }
+        TextButton(onClick = onDeleteClick) {
+            Text(text = "삭제")
         }
     }
 }

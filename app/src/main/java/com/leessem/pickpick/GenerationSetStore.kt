@@ -73,6 +73,11 @@ class GenerationSetStore(context: Context) {
         prefs.edit().putString(KEY_GENERATION_SETS, GenerationSetCodec.encode(remaining)).apply()
     }
 
+    fun updateRound(id: String, round: Int?) {
+        val updated = getAll().map { set -> if (set.id == id) set.copy(lottoRound = round) else set }
+        prefs.edit().putString(KEY_GENERATION_SETS, GenerationSetCodec.encode(updated)).apply()
+    }
+
     fun clearAll() {
         prefs.edit().remove(KEY_GENERATION_SETS).apply()
     }

@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -79,6 +82,8 @@ fun MainScreen() {
     var finalGameResult by remember { mutableStateOf<GenerationResult?>(null) }
     var savedGenerationSets by remember { mutableStateOf(generationSetStore.getAll()) }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var showSaveRoundDialog by remember { mutableStateOf(false) }
+    var editingRoundSetId by remember { mutableStateOf<String?>(null) }
 
     fun resetFromStage1() {
         stage1Games = emptyList()
@@ -130,11 +135,11 @@ fun MainScreen() {
         finalGameResult = LottoNumberGenerator.generateGame(pool)
     }
 
-    fun saveCurrentSet() {
+    fun saveWithRound(round: Int?) {
         val finalGame = (finalGameResult as? GenerationResult.Success)?.let { LottoGame(it.numbers) }
         val set = GenerationSet(
             id = UUID.randomUUID().toString(),
-            lottoRound = null,
+            lottoRound = round,
             createdAt = System.currentTimeMillis(),
             stage1Games = stage1Games,
             stage2Games = stage2Games,
@@ -142,7 +147,14 @@ fun MainScreen() {
         )
         generationSetStore.save(set)
         savedGenerationSets = generationSetStore.getAll()
+        showSaveRoundDialog = false
         Toast.makeText(context, "생성 세트를 저장했습니다.", Toast.LENGTH_SHORT).show()
+    }
+
+    fun updateRound(id: String, round: Int?) {
+        generationSetStore.updateRound(id, round)
+        savedGenerationSets = generationSetStore.getAll()
+        editingRoundSetId = null
     }
 
     fun deleteSet(id: String) {
@@ -262,7 +274,7 @@ fun MainScreen() {
         }
 
         Button(
-            onClick = { saveCurrentSet() },
+            onClick = { showSaveRoundDialog = true },
             enabled = stage1Games.size == STAGE1_GAME_COUNT && stage2Games.size == STAGE2_REGULAR_GAME_COUNT,
             modifier = Modifier.padding(top = 20.dp)
         ) {
@@ -281,7 +293,11 @@ fun MainScreen() {
         } else {
             Column(modifier = Modifier.padding(top = 8.dp)) {
                 savedGenerationSets.forEach { set ->
-                    SavedSetRow(set = set, onDeleteClick = { pendingDeleteId = set.id })
+                    SavedSetRow(
+                        set = set,
+                        onEditRoundClick = { editingRoundSetId = set.id },
+                        onDeleteClick = { pendingDeleteId = set.id }
+                    )
                 }
             }
         }
@@ -304,6 +320,75 @@ fun MainScreen() {
             }
         )
     }
+
+    if (showSaveRoundDialog) {
+        RoundInputDialog(
+            title = "생성 결과 저장",
+            initialValue = "",
+            onDismiss = { showSaveRoundDialog = false },
+            onConfirm = { round -> saveWithRound(round) }
+        )
+    }
+
+    editingRoundSetId?.let { id ->
+        val target = savedGenerationSets.first { it.id == id }
+        RoundInputDialog(
+            title = "회차 수정",
+            initialValue = target.lottoRound?.toString().orEmpty(),
+            onDismiss = { editingRoundSetId = null },
+            onConfirm = { round -> updateRound(id, round) }
+        )
+    }
+}
+
+@Composable
+private fun RoundInputDialog(
+    title: String,
+    initialValue: String,
+    onDismiss: () -> Unit,
+    onConfirm: (Int?) -> Unit
+) {
+    var input by remember { mutableStateOf(initialValue) }
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = {
+            Column {
+                Text(text = "로또 회차", style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { new -> if (new.all { it.isDigit() }) input = new },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val trimmed = input.trim()
+                if (trimmed.isEmpty()) {
+                    onConfirm(null)
+                    return@TextButton
+                }
+                val parsed = trimmed.toIntOrNull()
+                if (parsed == null || parsed <= 0) {
+                    Toast.makeText(context, "회차는 1 이상의 숫자로 입력하세요.", Toast.LENGTH_SHORT).show()
+                    return@TextButton
+                }
+                onConfirm(parsed)
+            }) {
+                Text(text = "저장")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "취소")
+            }
+        }
+    )
 }
 
 @Composable
@@ -362,7 +447,7 @@ private fun GameRow(label: String, game: LottoGame) {
 }
 
 @Composable
-private fun SavedSetRow(set: GenerationSet, onDeleteClick: () -> Unit) {
+private fun SavedSetRow(set: GenerationSet, onEditRoundClick: () -> Unit, onDeleteClick: () -> Unit) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
     Row(
         modifier = Modifier
@@ -372,7 +457,15 @@ private fun SavedSetRow(set: GenerationSet, onDeleteClick: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column {
-            Text(text = dateFormat.format(Date(set.createdAt)), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = set.lottoRound?.let { "제${it}회" } ?: "회차 미지정",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = dateFormat.format(Date(set.createdAt)),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
             Text(
                 text = "1단계 ${set.stage1Games.size}게임 · 2단계 ${set.stage2Games.size}게임 · " +
                     if (set.finalGame != null) "최종 조합 있음" else "최종 조합 없음",
@@ -380,8 +473,13 @@ private fun SavedSetRow(set: GenerationSet, onDeleteClick: () -> Unit) {
                 color = Color.Gray
             )
         }
-        TextButton(onClick = onDeleteClick) {
-            Text(text = "삭제")
+        Row {
+            TextButton(onClick = onEditRoundClick) {
+                Text(text = "회차 수정")
+            }
+            TextButton(onClick = onDeleteClick) {
+                Text(text = "삭제")
+            }
         }
     }
 }

@@ -151,4 +151,55 @@ class GenerationSetCodecTest {
     fun `encode of empty list decodes back to empty list, equivalent to an empty store`() {
         assertTrue(GenerationSetCodec.decode(GenerationSetCodec.encode(emptyList())).isEmpty())
     }
+
+    @Test
+    fun `generation sets saved before the round feature (lottoRound null) still round trip unaffected`() {
+        val legacySet = GenerationSet("legacy-1", null, 1_700_000_000_000L, sampleStage1(), sampleStage2(), null)
+
+        val decoded = GenerationSetCodec.decode(GenerationSetCodec.encode(listOf(legacySet)))
+
+        assertEquals(listOf(legacySet), decoded)
+    }
+
+    @Test
+    fun `multiple sets can share the same lottoRound, round is not a unique key`() {
+        val a = GenerationSet("a", 1234, 1L, sampleStage1(), sampleStage2(), null)
+        val b = GenerationSet("b", 1234, 2L, sampleStage1(), sampleStage2(), null)
+
+        val decoded = GenerationSetCodec.decode(GenerationSetCodec.encode(listOf(a, b)))
+
+        assertEquals(2, decoded.size)
+        assertTrue(decoded.all { it.lottoRound == 1234 })
+        assertEquals(setOf("a", "b"), decoded.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `store updateRound changes only lottoRound, leaving everything else and other sets untouched (simulated via codec)`() {
+        val target = GenerationSet(
+            id = "set-x",
+            lottoRound = 1234,
+            createdAt = 555L,
+            stage1Games = sampleStage1(),
+            stage2Games = sampleStage2(),
+            finalGame = LottoGame(listOf(1, 2, 3, 4, 5, 6))
+        )
+        val other = GenerationSet("set-y", 1234, 600L, sampleStage1(), sampleStage2(), null)
+
+        // Simulates GenerationSetStore.updateRound(id, round): decode -> map matching id's round -> encode.
+        val afterUpdate = GenerationSetCodec.decode(GenerationSetCodec.encode(listOf(target, other))).map {
+            if (it.id == "set-x") it.copy(lottoRound = 1235) else it
+        }
+        val reDecoded = GenerationSetCodec.decode(GenerationSetCodec.encode(afterUpdate))
+
+        val changed = reDecoded.first { it.id == "set-x" }
+        val unchanged = reDecoded.first { it.id == "set-y" }
+
+        assertEquals(1235, changed.lottoRound)
+        assertEquals(target.id, changed.id)
+        assertEquals(target.createdAt, changed.createdAt)
+        assertEquals(target.stage1Games, changed.stage1Games)
+        assertEquals(target.stage2Games, changed.stage2Games)
+        assertEquals(target.finalGame, changed.finalGame)
+        assertEquals(1234, unchanged.lottoRound)
+    }
 }

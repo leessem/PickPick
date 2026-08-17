@@ -72,6 +72,7 @@ private val FULL_RANGE = (1..45).toList()
 private const val STAGE1_GAME_COUNT = 5
 private const val STAGE2_GAME_COUNT = 2
 private const val STAGE3_GAME_COUNT = 3
+private const val TOTAL_GAME_COUNT = STAGE1_GAME_COUNT + STAGE2_GAME_COUNT + STAGE3_GAME_COUNT
 
 private enum class LatestCheckStatus { CHECKING, DONE, FAILED }
 
@@ -289,9 +290,17 @@ fun MainScreen() {
                     GameRow(label = "${index + 1}게임", game = game)
                 }
             }
-            Button(onClick = { generateStage3() }, modifier = Modifier.padding(top = 12.dp)) {
-                Text(text = "3단계 생성")
-            }
+        }
+
+        // Always rendered (like the "2단계 생성" button above), enabled only once stage2 is
+        // complete — mirrors that button's visible-but-disabled pattern instead of hiding this
+        // button until stage2 exists, so the full 1->2->3 flow is visible from the start.
+        Button(
+            onClick = { generateStage3() },
+            enabled = stage2Games.size == STAGE2_GAME_COUNT,
+            modifier = Modifier.padding(top = 20.dp)
+        ) {
+            Text(text = "3단계 생성")
         }
 
         if (stage3Games.isNotEmpty()) {
@@ -304,12 +313,20 @@ fun MainScreen() {
             }
         }
 
+        val totalGeneratedGames = stage1Games.size + stage2Games.size + stage3Games.size
+        Text(
+            text = "생성된 게임 $totalGeneratedGames / $TOTAL_GAME_COUNT",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = if (totalGeneratedGames == TOTAL_GAME_COUNT) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.padding(top = 20.dp)
+        )
+
         Button(
             onClick = { showSaveRoundDialog = true },
             enabled = stage1Games.size == STAGE1_GAME_COUNT &&
                 stage2Games.size == STAGE2_GAME_COUNT &&
                 stage3Games.size == STAGE3_GAME_COUNT,
-            modifier = Modifier.padding(top = 20.dp)
+            modifier = Modifier.padding(top = 12.dp)
         ) {
             Text(text = "이 생성 결과 저장")
         }
@@ -461,12 +478,42 @@ private fun GameRow(label: String, game: LottoGame, checkResult: LottoCheckResul
             }
         }
         if (checkResult != null) {
+            // A non-NONE rank is a win, however small (5th place included) — give it the same
+            // emphasis as 1st place's existing "🎉" text so it never reads identically to
+            // "미당첨" at a glance. Rank determination itself (LottoResultChecker) is untouched;
+            // this only changes how an already-computed rank is displayed.
+            val isWin = checkResult.rank != LottoRank.NONE
+            val resultColor = if (isWin) MaterialTheme.colorScheme.primary else Color.Gray
+            val resultWeight = if (isWin) FontWeight.Bold else FontWeight.Normal
             Column(modifier = Modifier.padding(start = 56.dp, top = 2.dp)) {
-                Text(text = lottoMatchCountText(checkResult), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                Text(text = lottoRankDisplayText(checkResult), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(
+                    text = lottoMatchCountText(checkResult),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = resultColor,
+                    fontWeight = resultWeight
+                )
+                Text(
+                    text = lottoRankDisplayText(checkResult),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = resultColor,
+                    fontWeight = resultWeight
+                )
             }
         }
     }
+}
+
+@Composable
+private fun SummaryCountRow(label: String, count: Int) {
+    // A non-zero win count is emphasized the same way GameRow emphasizes a winning game, so a
+    // "5등  1" line never blends into the surrounding all-gray summary the way it used to.
+    val isWin = count > 0
+    Text(
+        text = "$label  $count",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (isWin) MaterialTheme.colorScheme.primary else Color.Gray,
+        fontWeight = if (isWin) FontWeight.Bold else FontWeight.Normal
+    )
 }
 
 @Composable
@@ -582,6 +629,13 @@ private fun GenerationSetDetailScreen(
             style = MaterialTheme.typography.bodyMedium,
             color = Color.Gray
         )
+        // Shown unconditionally — independent of drawCheckState — since the game count is a
+        // fact about the saved set itself, not about whether a draw was found for its round.
+        Text(
+            text = "총 ${set.stage1Games.size + set.stage2Games.size + set.stage3Games.size}게임",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 4.dp)
+        )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = "당첨 결과", style = MaterialTheme.typography.titleLarge)
@@ -618,12 +672,11 @@ private fun GenerationSetDetailScreen(
 
                 val summary = LottoResultSummarizer.summarize(state.check)
                 Column(modifier = Modifier.padding(top = 12.dp)) {
-                    Text(text = "총 ${summary.totalGames}게임", style = MaterialTheme.typography.bodyMedium)
-                    Text(text = "1등  ${summary.firstCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(text = "2등  ${summary.secondCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(text = "3등  ${summary.thirdCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(text = "4등  ${summary.fourthCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(text = "5등  ${summary.fifthCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    SummaryCountRow(label = "1등", count = summary.firstCount)
+                    SummaryCountRow(label = "2등", count = summary.secondCount)
+                    SummaryCountRow(label = "3등", count = summary.thirdCount)
+                    SummaryCountRow(label = "4등", count = summary.fourthCount)
+                    SummaryCountRow(label = "5등", count = summary.fifthCount)
                     Text(text = "미당첨  ${summary.noneCount}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
             }

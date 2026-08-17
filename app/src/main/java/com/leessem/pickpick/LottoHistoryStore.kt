@@ -32,9 +32,18 @@ class LottoHistoryStore(context: Context) {
     fun getHistory(): List<LottoRecord> =
         LottoHistoryCodec.decode(prefs.getString(KEY_HISTORY, null)).sortedByDescending { it.timestamp }
 
-    fun addRecord(record: LottoRecord) {
-        val history = listOf(record) + getHistory()
+    fun addRecords(records: List<LottoRecord>) {
+        val history = records + getHistory()
         prefs.edit().putString(KEY_HISTORY, LottoHistoryCodec.encode(history)).apply()
+    }
+
+    fun deleteRecord(timestamp: Long) {
+        val history = getHistory().filterNot { it.timestamp == timestamp }
+        prefs.edit().putString(KEY_HISTORY, LottoHistoryCodec.encode(history)).apply()
+    }
+
+    fun clearAll() {
+        prefs.edit().remove(KEY_HISTORY).apply()
     }
 
     companion object {

@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +59,24 @@ fun MainScreen() {
     val context = LocalContext.current
     val historyStore = remember { LottoHistoryStore(context) }
     var history by remember { mutableStateOf(historyStore.getHistory()) }
+    var currentBatch by remember { mutableStateOf(history.take(1)) }
+    var showClearAllDialog by remember { mutableStateOf(false) }
+
+    fun generate(count: Int) {
+        val base = System.currentTimeMillis()
+        val batch = (0 until count).map { index ->
+            LottoRecord(numbers = LottoNumberGenerator.generate(), timestamp = base - index)
+        }
+        historyStore.addRecords(batch)
+        history = historyStore.getHistory()
+        currentBatch = batch
+    }
+
+    fun deleteRecord(record: LottoRecord) {
+        historyStore.deleteRecord(record.timestamp)
+        history = historyStore.getHistory()
+        currentBatch = currentBatch.filterNot { it.timestamp == record.timestamp }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(
@@ -66,24 +86,30 @@ fun MainScreen() {
             Text(text = "PickPick", style = MaterialTheme.typography.headlineLarge)
             Text(text = "PickPick에 오신 것을 환영합니다")
 
-            Button(
-                onClick = {
-                    val numbers = LottoNumberGenerator.generate()
-                    historyStore.addRecord(LottoRecord(numbers = numbers, timestamp = System.currentTimeMillis()))
-                    history = historyStore.getHistory()
-                },
-                modifier = Modifier.padding(top = 24.dp)
+            Row(
+                modifier = Modifier.padding(top = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(text = "번호 생성")
+                Button(onClick = { generate(1) }) {
+                    Text(text = "1게임 생성")
+                }
+                Button(onClick = { generate(5) }) {
+                    Text(text = "5게임 생성")
+                }
             }
 
-            if (history.isNotEmpty()) {
-                Row(
+            if (currentBatch.isNotEmpty()) {
+                Column(
                     modifier = Modifier.padding(top = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    history.first().numbers.forEach { number ->
-                        LottoBall(number = number, size = 44.dp)
+                    currentBatch.forEach { record ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            record.numbers.forEach { number ->
+                                LottoBall(number = number, size = 44.dp)
+                            }
+                        }
                     }
                 }
             }
@@ -91,32 +117,74 @@ fun MainScreen() {
 
         if (history.isNotEmpty()) {
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-            Text(text = "생성 기록", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp)) {
-                items(history) { record ->
-                    HistoryRow(record)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = "생성 기록", style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = { showClearAllDialog = true }) {
+                    Text(text = "전체 삭제")
+                }
+            }
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(history, key = { it.timestamp }) { record ->
+                    HistoryRow(record = record, onDelete = { deleteRecord(record) })
                 }
             }
         }
     }
+
+    if (showClearAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllDialog = false },
+            title = { Text(text = "전체 삭제") },
+            text = { Text(text = "생성 기록을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    historyStore.clearAll()
+                    history = emptyList()
+                    currentBatch = emptyList()
+                    showClearAllDialog = false
+                }) {
+                    Text(text = "삭제")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllDialog = false }) {
+                    Text(text = "취소")
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun HistoryRow(record: LottoRecord) {
+private fun HistoryRow(record: LottoRecord, onDelete: () -> Unit) {
     val dateFormat = remember { SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA) }
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 8.dp)
     ) {
-        Text(
-            text = dateFormat.format(Date(record.timestamp)),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = dateFormat.format(Date(record.timestamp)),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+            TextButton(onClick = onDelete) {
+                Text(text = "삭제", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
+        Row(
+            modifier = Modifier.padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             record.numbers.forEach { number ->
                 LottoBall(number = number, size = 26.dp)
             }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -213,6 +214,10 @@ fun MainScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Without this, targetSdk 36 draws edge-to-edge on Android 15+ and the bottom of the
+            // saved-set list (and the save/generate buttons above it) end up under the system
+            // navigation bar on a real phone — not reproduced on every emulator/nav-mode combo.
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
@@ -635,6 +640,9 @@ private fun GenerationSetDetailScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            // Same bottom-nav-bar clipping as MainScreen — the last stage3 game here was
+            // getting hidden behind the system navigation bar on a real phone.
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {

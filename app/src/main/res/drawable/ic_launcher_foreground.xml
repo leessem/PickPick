@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  pickpick_icon.png is a pre-rounded square with no alpha channel (opaque black corners), not
+  full-bleed art meant to be freely cropped by an adaptive-icon mask. Insetting it by ~25% of the
+  108dp adaptive icon canvas keeps the whole image inside the ~66dp safe zone that every launcher
+  shape (circle, squircle, rounded square) guarantees stays visible, so its corners are never
+  clipped unpredictably per-launcher.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/pickpick_icon"
+    android:insetLeft="27dp"
+    android:insetTop="27dp"
+    android:insetRight="27dp"
+    android:insetBottom="27dp" />

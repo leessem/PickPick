@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -564,8 +566,14 @@ private sealed class DrawCheckState {
     object NoRound : DrawCheckState()
     object Loading : DrawCheckState()
     data class Success(val draw: LottoDrawResult, val check: GenerationCheckResult) : DrawCheckState()
-    data class Failure(val message: String) : DrawCheckState()
+    // Holds the fetchResult (not just its message) so the UI can decide whether this specific
+    // failure is retryable (NetworkError only) without re-deriving that from display text.
+    data class Failure(val fetchResult: LottoDrawFetchResult) : DrawCheckState()
 }
+
+/** Only a NetworkError is worth retrying — NotFound/InvalidData will fail the same way again. */
+internal fun isRetryableFailure(fetchResult: LottoDrawFetchResult): Boolean =
+    fetchResult is LottoDrawFetchResult.NetworkError
 
 @Composable
 private fun GenerationSetDetailScreen(
@@ -577,17 +585,18 @@ private fun GenerationSetDetailScreen(
     BackHandler(onBack = onBack)
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA) }
     val drawDateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.KOREA) }
+    val coroutineScope = rememberCoroutineScope()
 
     var drawCheckState by remember(set.id) {
         mutableStateOf<DrawCheckState>(if (set.lottoRound == null) DrawCheckState.NoRound else DrawCheckState.Loading)
     }
+    var isRetrying by remember(set.id) { mutableStateOf(false) }
 
-    // Keyed on set.id so this only re-fetches when the displayed set changes, not on every
-    // recomposition (e.g. a state update from the delete dialog). Cache-first: LottoDrawStore is
-    // checked before ever calling LottoDrawRepository (see resolveDraw in LottoDrawCache.kt).
-    LaunchedEffect(set.id) {
-        val round = set.lottoRound ?: return@LaunchedEffect
-        drawCheckState = DrawCheckState.Loading
+    // Cache-first: LottoDrawStore is checked before ever calling LottoDrawRepository (see
+    // resolveDraw in LottoDrawCache.kt). Shared by the initial load below and by the "다시 시도"
+    // button so a retry re-runs exactly the same lookup, not a separate code path.
+    suspend fun loadDraw() {
+        val round = set.lottoRound ?: return
         when (val result = resolveDraw(round, getCached = drawStore::get, saveToCache = drawStore::save)) {
             is DrawLookupResult.FromCache -> {
                 val checkResult = LottoResultChecker.check(set, result.draw)
@@ -598,8 +607,27 @@ private fun GenerationSetDetailScreen(
                 drawCheckState = DrawCheckState.Success(result.draw, checkResult)
             }
             is DrawLookupResult.Failed -> {
-                drawCheckState = DrawCheckState.Failure(lottoDrawFetchErrorMessage(result.fetchResult))
+                drawCheckState = DrawCheckState.Failure(result.fetchResult)
             }
+        }
+    }
+
+    // Keyed on set.id so this only re-fetches when the displayed set changes, not on every
+    // recomposition (e.g. a state update from the delete dialog).
+    LaunchedEffect(set.id) {
+        if (set.lottoRound == null) return@LaunchedEffect
+        drawCheckState = DrawCheckState.Loading
+        loadDraw()
+    }
+
+    // No separate loading state here on purpose — the existing error message and retry button
+    // stay visible the whole time, only disabled, so a retry doesn't flash a different screen.
+    fun retryLoadDraw() {
+        if (isRetrying) return
+        isRetrying = true
+        coroutineScope.launch {
+            loadDraw()
+            isRetrying = false
         }
     }
 
@@ -650,7 +678,19 @@ private fun GenerationSetDetailScreen(
                 Text(text = "당첨 결과 확인 중...", modifier = Modifier.padding(top = 8.dp))
             }
             is DrawCheckState.Failure -> {
-                Text(text = state.message, modifier = Modifier.padding(top = 8.dp))
+                Text(
+                    text = lottoDrawFetchErrorMessage(state.fetchResult),
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                if (isRetryableFailure(state.fetchResult)) {
+                    Button(
+                        onClick = { retryLoadDraw() },
+                        enabled = !isRetrying,
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        Text(text = "다시 시도")
+                    }
+                }
             }
             is DrawCheckState.Success -> {
                 Text(

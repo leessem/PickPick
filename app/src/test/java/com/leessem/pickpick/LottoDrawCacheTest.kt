@@ -117,4 +117,58 @@ class LottoDrawCacheTest {
         val check = LottoResultChecker.check(generationSet, matchedDraw!!)
         assertEquals(LottoRank.FIRST, check.stage1Results.single().rank)
     }
+
+    // The detail screen's "다시 시도" button re-invokes resolveDraw with the exact same
+    // arguments as the initial load — these tests simulate that by calling resolveDraw twice
+    // in a row, standing in for "first load fails, user taps retry."
+
+    // 21: a NetworkError followed by a retry that succeeds transitions to Fetched
+    @Test
+    fun `a retry call after a NetworkError succeeds and returns Fetched`() = runBlocking {
+        val cache = mutableMapOf<Int, LottoDrawResult>()
+
+        val firstAttempt = resolveDraw(
+            round = 1234,
+            getCached = { cache[it] },
+            saveToCache = { cache[it.round] = it },
+            fetch = { LottoDrawFetchResult.NetworkError("boom") }
+        )
+        assertTrue(firstAttempt is DrawLookupResult.Failed)
+        assertTrue((firstAttempt as DrawLookupResult.Failed).fetchResult is LottoDrawFetchResult.NetworkError)
+
+        val retryAttempt = resolveDraw(
+            round = 1234,
+            getCached = { cache[it] },
+            saveToCache = { cache[it.round] = it },
+            fetch = { LottoDrawFetchResult.Success(draw(1234)) }
+        )
+
+        assertTrue(retryAttempt is DrawLookupResult.Fetched)
+        assertEquals(1234, (retryAttempt as DrawLookupResult.Fetched).draw.round)
+        assertEquals(draw(1234), cache[1234])
+    }
+
+    // 22: a NetworkError followed by a retry that fails again stays Failed with NetworkError
+    @Test
+    fun `a retry call after a NetworkError fails again and remains Failed`() = runBlocking {
+        val cache = mutableMapOf<Int, LottoDrawResult>()
+
+        resolveDraw(
+            round = 1234,
+            getCached = { cache[it] },
+            saveToCache = { cache[it.round] = it },
+            fetch = { LottoDrawFetchResult.NetworkError("boom") }
+        )
+
+        val retryAttempt = resolveDraw(
+            round = 1234,
+            getCached = { cache[it] },
+            saveToCache = { cache[it.round] = it },
+            fetch = { LottoDrawFetchResult.NetworkError("boom again") }
+        )
+
+        assertTrue(retryAttempt is DrawLookupResult.Failed)
+        assertTrue((retryAttempt as DrawLookupResult.Failed).fetchResult is LottoDrawFetchResult.NetworkError)
+        assertTrue(cache.isEmpty())
+    }
 }
